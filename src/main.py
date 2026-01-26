@@ -101,16 +101,19 @@ class TradingBot:
     #     # Start main loop
     #     asyncio.create_task(self.main_loop())
     async def fast_price_ui_loop(self):
-        while True:
-            if self.binance_client:
-                try:
-                    prices = self.binance_client.get_fast_prices()
-                    if prices:
-                        await broadcast_price_only(prices)
-                except Exception:
-                    pass
+        logger.info("FAST PRICE LOOP STARTED")  # <--- ADD THIS
+
+        while self.running:
+            try:
+                prices = self.binance_client.get_fast_prices()
+                if prices:
+                    logger.info("FAST PRICE SENT")  # <--- ADD THIS
+                    await broadcast_price_only(prices)
+            except Exception as e:
+                logger.error(f"Fast price loop error: {e}")
 
             await asyncio.sleep(1.5)
+
 
     
     async def start(self):
@@ -123,7 +126,8 @@ class TradingBot:
         self.running = True
 
         asyncio.create_task(self.main_loop())
-        asyncio.create_task(self.fast_price_ui_loop())
+        asyncio.create_task(self.fast_price_ui_loop())  # <-- THIS MUST EXIST
+
 
         
     async def stop(self):
