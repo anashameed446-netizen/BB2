@@ -383,6 +383,23 @@ function handleWebSocketMessage(data) {
                 localStorage.removeItem(STORAGE_KEYS.ACTIVE_TRADE);
             }
             break;
+        case 'price_update':
+            data.data.forEach(item => {
+                const row = document.querySelector(`tr[data-symbol="${item.symbol}"]`);
+                if (!row) return;
+
+                const priceCell = row.querySelector('.price');
+                if (!priceCell) return;
+
+                const oldPrice = priceCell.innerText;
+                const newPrice = formatPrice(item.price);
+
+                if (oldPrice !== newPrice) {
+                    priceCell.innerText = newPrice;
+                }
+            });
+            break;
+
         case 'log':
             addLog(data.message, data.level);
             break;
@@ -403,16 +420,34 @@ function handleWebSocketMessage(data) {
 }
 
 // Update Market Table
+// function updateMarketTable(markets) {
+//     if (!markets || markets.length === 0) {
+//         marketTableBody.innerHTML = '<tr class="empty-state"><td colspan="7">No market data available</td></tr>';
+//         return;
+//     }
+    
+//     marketTableBody.innerHTML = markets.map(market => `
+//         <tr>
+//             <td><strong>${market.symbol}</strong></td>
+//             <td>${formatPrice(market.price)}</td>
+//             <td>${formatPrice(market.prev_close_price || 0)}</td>
+//             <td>${formatVolume(market.current_volume)}</td>
+//             <td>${formatVolume(market.prev_volume)}</td>
+//             <td>${market.elapsed_minutes}m</td>
+//             <td>${getStatusEmoji(market.status)} ${market.status}</td>
+//         </tr>
+//     `).join('');
+// }
 function updateMarketTable(markets) {
     if (!markets || markets.length === 0) {
         marketTableBody.innerHTML = '<tr class="empty-state"><td colspan="7">No market data available</td></tr>';
         return;
     }
-    
+
     marketTableBody.innerHTML = markets.map(market => `
-        <tr>
+        <tr data-symbol="${market.symbol}">
             <td><strong>${market.symbol}</strong></td>
-            <td>${formatPrice(market.price)}</td>
+            <td class="price">${formatPrice(market.price)}</td>
             <td>${formatPrice(market.prev_close_price || 0)}</td>
             <td>${formatVolume(market.current_volume)}</td>
             <td>${formatVolume(market.prev_volume)}</td>
@@ -421,6 +456,7 @@ function updateMarketTable(markets) {
         </tr>
     `).join('');
 }
+
 
 // Update Active Trade
 function updateActiveTrade(trade) {

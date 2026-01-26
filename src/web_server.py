@@ -243,6 +243,37 @@ async def broadcast_message(message: dict):
     # Remove disconnected clients
     for client in disconnected:
         websocket_clients.discard(client)
+async def broadcast_price_only(prices: dict):
+    """
+    Broadcast fast price-only updates to UI.
+    Does NOT affect strategy logic.
+    """
+    if not websocket_clients:
+        return
+
+    payload = {
+        "type": "price_update",
+        "data": [
+            {
+                "symbol": symbol,
+                "price": round(price, 6)
+            }
+            for symbol, price in prices.items()
+        ]
+    }
+
+    message_json = json.dumps(payload)
+    disconnected = set()
+
+    for client in websocket_clients:
+        try:
+            await client.send_text(message_json)
+        except Exception:
+            disconnected.add(client)
+
+    for client in disconnected:
+        websocket_clients.discard(client)
+
 
 
 def set_bot_instance(bot):

@@ -17,6 +17,7 @@ from state_manager import StateManager
 from trade_manager import TradeManager
 from trade_history import TradeHistory
 import web_server
+from web_server import broadcast_price_only
 
 # Configure logging
 logging.basicConfig(
@@ -83,23 +84,48 @@ class TradingBot:
             logger.error(f"Error initializing bot: {e}")
             return False
     
-    async def start(self):
-        """Start the trading bot."""
-        if self.running:
-            logger.warning("Bot is already running")
-            return
+    # async def start(self):
+    #     """Start the trading bot."""
+    #     if self.running:
+    #         logger.warning("Bot is already running")
+    #         return
         
-        if not self.initialize():
-            await self.log_to_ui("❌ Failed to initialize bot. Check API credentials.", "error")
-            return
+    #     if not self.initialize():
+    #         await self.log_to_ui("❌ Failed to initialize bot. Check API credentials.", "error")
+    #         return
         
-        self.running = True
-        logger.info("🚀 Trading bot started")
-        await self.log_to_ui("🚀 Bot started and scanning markets...")
+    #     self.running = True
+    #     logger.info("🚀 Trading bot started")
+    #     await self.log_to_ui("🚀 Bot started and scanning markets...")
         
-        # Start main loop
-        asyncio.create_task(self.main_loop())
+    #     # Start main loop
+    #     asyncio.create_task(self.main_loop())
+    async def fast_price_ui_loop(self):
+        while True:
+            if self.binance_client:
+                try:
+                    prices = self.binance_client.get_fast_prices()
+                    if prices:
+                        await broadcast_price_only(prices)
+                except Exception:
+                    pass
+
+            await asyncio.sleep(1.5)
+
     
+    async def start(self):
+        if self.running:
+            return
+
+        if not self.initialize():
+            return
+
+        self.running = True
+
+        asyncio.create_task(self.main_loop())
+        asyncio.create_task(self.fast_price_ui_loop())
+
+        
     async def stop(self):
         """Stop the trading bot and close any active trades."""
         self.running = False
@@ -253,7 +279,7 @@ class TradingBot:
         for symbol in self.monitored_symbols:
             self.candle_tracker.update_candles(symbol, interval)
             # Small delay between requests to respect rate limits (50ms = 20 req/sec max)
-            await asyncio.sleep(0.05)
+            # await asyncio.sleep(0.05)
     
     async def check_entry_signals(self):
         """Check for entry signals across monitored symbols."""
@@ -380,6 +406,7 @@ class TradingBot:
     async def broadcast_updates(self):
         """Broadcast updates to web UI."""
         # Market update - filter and limit to requested count
+        all_prices = self.binance_client.get_all_prices()
         market_data = []
         requested_count = getattr(self, 'requested_count', self.config_manager['top_gainers_count'])
         
@@ -390,7 +417,9 @@ class TradingBot:
             
             prev_candle = self.candle_tracker.get_previous_candle(symbol)
             current_candle = self.candle_tracker.get_current_candle(symbol)
-            current_price = self.binance_client.get_current_price(symbol)
+            # current_price = self.binance_client.get_current_price(symbol)
+            current_price = all_prices.get(symbol)
+
             
             # Get elapsed minutes and validate it
             elapsed_minutes = current_candle.get('elapsed_minutes') if current_candle else None
@@ -459,7 +488,8 @@ class TradingBot:
             else:
                 # Trade still valid, update usdt_amount for display
                 symbol = active_trade['symbol']
-                current_price = self.binance_client.get_current_price(symbol)
+                # current_price = self.binance_client.get_current_price(symbol)
+                current_price = all_prices.get(symbol)
                 quantity = active_trade.get('quantity', 0)
                 
                 if current_price and quantity:
@@ -500,7 +530,7 @@ async def run_server():
     config = uvicorn.Config(
         web_server.app,
         host="0.0.0.0",
-        port=8000,
+        port=8001,
         log_level="info"
     )
     server = uvicorn.Server(config)

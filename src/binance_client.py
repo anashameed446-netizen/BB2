@@ -30,6 +30,8 @@ class BinanceClient:
         self.ws_manager = None  # Optional[ThreadedWebsocketManager] - may not be available
         self.connected = False
         self._last_request_time = 0
+        self._price_cache = {}  # symbol -> (price, timestamp)
+        self._price_cache_ttl = 2  # seconds
         self._min_request_interval = 0.1  # Minimum 100ms between requests to avoid rate limits
     
     def _wait_for_rate_limit(self) -> None:
@@ -151,31 +153,89 @@ class BinanceClient:
                 return []
         return []
     
+    # def get_current_price(self, symbol: str, retries: int = 2) -> Optional[float]:
+    #     """Get current price for a symbol with rate limit handling."""
+    #     for attempt in range(1, retries + 1):
+    #         try:
+    #             self._wait_for_rate_limit()
+    #             ticker = self.client.get_symbol_ticker(symbol=symbol)
+    #             return float(ticker['price'])
+    #         except BinanceAPIException as e:
+    #             error_code = getattr(e, 'code', None)
+                
+    #             # Handle rate limiting
+    #             if error_code in RATE_LIMIT_ERROR_CODES:
+    #                 if attempt < retries:
+    #                     logger.warning(f"Rate limit hit fetching price for {symbol}. Waiting {self.RATE_LIMIT_WAIT_SECONDS}s...")
+    #                     time.sleep(self.RATE_LIMIT_WAIT_SECONDS)
+    #                     continue
+    #                 logger.error(f"Rate limit exceeded fetching price for {symbol}")
+    #                 return None
+                
+    #             logger.error(f"Error fetching price for {symbol}: {e}")
+    #             return None
+    #         except Exception as e:
+    #             logger.error(f"Unexpected error fetching price for {symbol}: {type(e).__name__}: {e}")
+    #             return None
+    #     return None
+    
+    
     def get_current_price(self, symbol: str, retries: int = 2) -> Optional[float]:
-        """Get current price for a symbol with rate limit handling."""
+        """Get current price with short-term cache (low latency)."""
+        now = time.time()
+
+        # Serve from cache if fresh
+        cached = self._price_cache.get(symbol)
+        if cached and (now - cached[1]) < self._price_cache_ttl:
+            return cached[0]
+
         for attempt in range(1, retries + 1):
             try:
                 self._wait_for_rate_limit()
                 ticker = self.client.get_symbol_ticker(symbol=symbol)
-                return float(ticker['price'])
-            except BinanceAPIException as e:
-                error_code = getattr(e, 'code', None)
+                price = float(ticker['price'])
+
+                # Update cache
+                self._price_cache[symbol] = (price, now)
+                return price
+
+            except Exception:
+                if attempt >= retries:
+                    return cached[0] if cached else None
                 
-                # Handle rate limiting
-                if error_code in RATE_LIMIT_ERROR_CODES:
-                    if attempt < retries:
-                        logger.warning(f"Rate limit hit fetching price for {symbol}. Waiting {self.RATE_LIMIT_WAIT_SECONDS}s...")
-                        time.sleep(self.RATE_LIMIT_WAIT_SECONDS)
-                        continue
-                    logger.error(f"Rate limit exceeded fetching price for {symbol}")
-                    return None
-                
-                logger.error(f"Error fetching price for {symbol}: {e}")
-                return None
-            except Exception as e:
-                logger.error(f"Unexpected error fetching price for {symbol}: {type(e).__name__}: {e}")
-                return None
-        return None
+    def get_fast_prices(self) -> dict:
+        now = time.time()
+        if hasattr(self, "_fast_price_cache"):
+            prices, ts = self._fast_price_cache
+            if now - ts < 1:
+                return prices
+
+        tickers = self.client.get_ticker()
+        prices = {t['symbol']: float(t['lastPrice']) for t in tickers}
+        self._fast_price_cache = (prices, now)
+        return prices
+
+
+    def get_all_prices(self) -> Dict[str, float]:
+        """Fetch all symbol prices in ONE call."""
+        self._wait_for_rate_limit()
+        tickers = self.client.get_ticker()
+
+        now = time.time()
+        prices = {}
+
+        for t in tickers:
+            try:
+                price = float(t['lastPrice'])
+                symbol = t['symbol']
+                prices[symbol] = price
+                self._price_cache[symbol] = (price, now)
+            except:
+                continue
+
+        return prices
+
+
     
     def get_24h_volume(self, symbol: str) -> Optional[float]:
         """Get 24h volume for a symbol."""

@@ -24,6 +24,9 @@ class CandleTracker:
         self.current_candles: Dict[str, Dict] = {}
         self.candle_start_times: Dict[str, int] = {}
         self.previous_candle_fetched_hour: Dict[str, int] = {}  # Track when previous candle was fetched
+        self._last_kline_fetch = {}  # symbol -> timestamp
+        self._kline_ttl = 300  # 5 minutes
+
     
     def _get_current_hour(self) -> int:
         """Get current hour (0-23) for tracking when to fetch previous candle."""
@@ -47,104 +50,168 @@ class CandleTracker:
         
         return False
     
-    def update_candles(self, symbol: str, interval: str = "1h") -> bool:
-        """
-        Update previous and current candle data for a symbol.
-        Previous candle is fetched once at the start of each hour.
-        Current candle is updated continuously.
-        Returns True if successful, False otherwise.
-        """
-        try:
-            # Always fetch current candle data
-            klines = self.client.get_klines(symbol=symbol, interval=interval, limit=2)
+    # def update_candles(self, symbol: str, interval: str = "1h") -> bool:
+    #     """
+    #     Update previous and current candle data for a symbol.
+    #     Previous candle is fetched once at the start of each hour.
+    #     Current candle is updated continuously.
+    #     Returns True if successful, False otherwise.
+    #     """
+    #     try:
+    #         # Always fetch current candle data
+    #         klines = self.client.get_klines(symbol=symbol, interval=interval, limit=2)
             
-            if not klines or len(klines) < 2:
-                logger.warning(f"Insufficient kline data for {symbol}")
-                return False
+    #         if not klines or len(klines) < 2:
+    #             logger.warning(f"Insufficient kline data for {symbol}")
+    #             return False
             
-            # Fetch previous closed candle ONCE at the start of each hour
-            if self._should_fetch_previous_candle(symbol):
-                # Previous closed candle (index -2, as -1 is current forming)
-                prev_candle = klines[-2]
-                prev_close_price = float(prev_candle[4])  # Close price
-                prev_volume = float(prev_candle[5])  # Volume
-                prev_open_time = int(prev_candle[0])  # Open time
+    #         # Fetch previous closed candle ONCE at the start of each hour
+    #         if self._should_fetch_previous_candle(symbol):
+    #             # Previous closed candle (index -2, as -1 is current forming)
+    #             prev_candle = klines[-2]
+    #             prev_close_price = float(prev_candle[4])  # Close price
+    #             prev_volume = float(prev_candle[5])  # Volume
+    #             prev_open_time = int(prev_candle[0])  # Open time
                 
-                # Store previous candle
-                self.previous_candles[symbol] = CandleData(
-                    open_time=prev_open_time,
-                    close_price=prev_close_price,
-                    volume=prev_volume
-                )
+    #             # Store previous candle
+    #             self.previous_candles[symbol] = CandleData(
+    #                 open_time=prev_open_time,
+    #                 close_price=prev_close_price,
+    #                 volume=prev_volume
+    #             )
                 
-                # Mark that we've fetched previous candle for this hour
-                self.previous_candle_fetched_hour[symbol] = self._get_current_hour()
-                logger.info(f"Previous candle fetched for {symbol} at hour {self._get_current_hour()}: "
-                          f"Close={prev_close_price:.8f}, Volume={prev_volume:.2f}")
+    #             # Mark that we've fetched previous candle for this hour
+    #             self.previous_candle_fetched_hour[symbol] = self._get_current_hour()
+    #             logger.info(f"Previous candle fetched for {symbol} at hour {self._get_current_hour()}: "
+    #                       f"Close={prev_close_price:.8f}, Volume={prev_volume:.2f}")
             
-            # Current forming candle - update continuously
-            current_candle = klines[-1]
-            current_open_time = int(current_candle[0])
-            current_volume = float(current_candle[5])
-            current_price = float(current_candle[4])  # Current close (real-time)
+    #         # Current forming candle - update continuously
+    #         current_candle = klines[-1]
+    #         current_open_time = int(current_candle[0])
+    #         current_volume = float(current_candle[5])
+    #         current_price = float(current_candle[4])  # Current close (real-time)
             
-            # Check if new candle period started
-            if symbol not in self.candle_start_times or \
-               self.candle_start_times[symbol] != current_open_time:
-                self.candle_start_times[symbol] = current_open_time
-                # Reset previous candle fetch flag when new candle starts
-                if symbol in self.previous_candle_fetched_hour:
-                    del self.previous_candle_fetched_hour[symbol]
-                logger.info(f"New candle started for {symbol} at {current_open_time}")
+    #         # Check if new candle period started
+    #         if symbol not in self.candle_start_times or \
+    #            self.candle_start_times[symbol] != current_open_time:
+    #             self.candle_start_times[symbol] = current_open_time
+    #             # Reset previous candle fetch flag when new candle starts
+    #             if symbol in self.previous_candle_fetched_hour:
+    #                 del self.previous_candle_fetched_hour[symbol]
+    #             logger.info(f"New candle started for {symbol} at {current_open_time}")
             
-            # Calculate elapsed minutes with validation
-            elapsed_minutes = self._get_elapsed_minutes(current_open_time)
+    #         # Calculate elapsed minutes with validation
+    #         elapsed_minutes = self._get_elapsed_minutes(current_open_time)
             
-            # Only update if elapsed time is valid
-            if elapsed_minutes is not None:
-                # Update current candle data continuously
-                self.current_candles[symbol] = {
-                    'open_time': current_open_time,
-                    'volume': current_volume,
-                    'price': current_price,
-                    'elapsed_minutes': elapsed_minutes
-                }
-            else:
-                # Log warning but don't update with invalid data
-                logger.warning(f"Skipping update for {symbol} - invalid elapsed time calculation")
+    #         # Only update if elapsed time is valid
+    #         if elapsed_minutes is not None:
+    #             # Update current candle data continuously
+    #             self.current_candles[symbol] = {
+    #                 'open_time': current_open_time,
+    #                 'volume': current_volume,
+    #                 'price': current_price,
+    #                 'elapsed_minutes': elapsed_minutes
+    #             }
+    #         else:
+    #             # Log warning but don't update with invalid data
+    #             logger.warning(f"Skipping update for {symbol} - invalid elapsed time calculation")
             
-            return True
+    #         return True
         
-        except Exception as e:
-            logger.error(f"Error updating candles for {symbol}: {e}")
+    #     except Exception as e:
+    #         logger.error(f"Error updating candles for {symbol}: {e}")
+    #         return False
+    
+    def update_candles(self, symbol: str, interval: str = "1h") -> bool:
+        now = time.time()
+
+        # Fetch klines only every 5 minutes
+        last_fetch = self._last_kline_fetch.get(symbol, 0)
+        if now - last_fetch < self._kline_ttl:
+            return True
+
+        try:
+            klines = self.client.get_klines(symbol=symbol, interval=interval, limit=2)
+            if not klines or len(klines) < 2:
+                return False
+
+            prev = klines[-2]
+            curr = klines[-1]
+
+            self.previous_candles[symbol] = CandleData(
+                open_time=int(prev[0]),
+                close_price=float(prev[4]),
+                volume=float(prev[5])
+            )
+
+            elapsed = self._get_elapsed_minutes(int(curr[0]))
+            if elapsed is not None:
+                self.current_candles[symbol] = {
+                    'open_time': int(curr[0]),
+                    'volume': float(curr[5]),
+                    'price': float(curr[4]),
+                    'elapsed_minutes': elapsed
+                }
+
+            self._last_kline_fetch[symbol] = now
+            return True
+
+        except Exception:
             return False
+
+    
+    # def _get_elapsed_minutes(self, candle_open_time: int) -> Optional[int]:
+    #     """
+    #     Calculate elapsed minutes since candle opened.
+    #     Returns None if the calculation is invalid (negative or > 60 minutes).
+    #     """
+    #     try:
+    #         current_time_ms = int(time.time() * 1000)
+    #         elapsed_ms = current_time_ms - candle_open_time
+            
+    #         # Validate: elapsed time should be positive and reasonable
+    #         if elapsed_ms < 0:
+    #             logger.warning(f"Negative elapsed time detected: {elapsed_ms}ms (candle_open_time may be in future)")
+    #             return None
+            
+    #         elapsed_minutes = elapsed_ms // (60 * 1000)
+            
+    #         # For 1-hour candles, elapsed time should be 0-60 minutes
+    #         # If it's more than 60, the candle data is likely stale or incorrect
+    #         if elapsed_minutes > 60:
+    #             logger.warning(f"Elapsed time exceeds 60 minutes: {elapsed_minutes}m (candle data may be stale)")
+    #             return None
+            
+    #         return int(elapsed_minutes)
+    #     except Exception as e:
+    #         logger.error(f"Error calculating elapsed minutes: {e}")
+    #         return None
     
     def _get_elapsed_minutes(self, candle_open_time: int) -> Optional[int]:
         """
         Calculate elapsed minutes since candle opened.
-        Returns None if the calculation is invalid (negative or > 60 minutes).
+        Uses UTC alignment to avoid stale candle issues.
         """
         try:
-            current_time_ms = int(time.time() * 1000)
-            elapsed_ms = current_time_ms - candle_open_time
-            
-            # Validate: elapsed time should be positive and reasonable
-            if elapsed_ms < 0:
-                logger.warning(f"Negative elapsed time detected: {elapsed_ms}ms (candle_open_time may be in future)")
+            now = datetime.utcnow()
+
+            candle_time = datetime.utcfromtimestamp(candle_open_time / 1000)
+
+            # If candle is not from current hour, ignore it
+            if candle_time.hour != now.hour or candle_time.date() != now.date():
                 return None
-            
-            elapsed_minutes = elapsed_ms // (60 * 1000)
-            
-            # For 1-hour candles, elapsed time should be 0-60 minutes
-            # If it's more than 60, the candle data is likely stale or incorrect
-            if elapsed_minutes > 60:
-                logger.warning(f"Elapsed time exceeds 60 minutes: {elapsed_minutes}m (candle data may be stale)")
+
+            elapsed = (now - candle_time).total_seconds() / 60
+
+            if elapsed < 0 or elapsed > 60:
                 return None
-            
-            return int(elapsed_minutes)
+
+            return int(elapsed)
+
         except Exception as e:
-            logger.error(f"Error calculating elapsed minutes: {e}")
+            logger.error(f"Elapsed time calc failed: {e}")
             return None
+
     
     def get_previous_candle(self, symbol: str) -> Optional[CandleData]:
         """Get previous closed candle data."""
