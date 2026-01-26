@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Binance Spot Volume Breakout Trading Bot - Real-time automated trading interface">
+    <title>Binance Spot Volume Breakout Bot</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Main Container -->
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1>BINANCE SPOT VOLUME BREAKOUT BOT</h1>
+                <div class="header-status">
+                    <span class="status-badge" id="botStatus">
+                        <span class="status-indicator"></span>
+                        <span id="statusText">STOPPED</span>
+                    </span>
+                    <span class="mode-badge">Mode: <strong id="modeText">LIVE</strong></span>
+                    <span class="timeframe-badge">Timeframe: <strong id="timeframeText">1H</strong></span>
+                </div>
+                <div class="header-info">
+                    <span>Exchange: <strong>BINANCE (SPOT)</strong></span>
+                    <span id="activeTrade">Active Trade: <strong>NO</strong></span>
+                    <span id="botState">Bot State: <strong>STOPPED</strong></span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Grid -->
+        <div class="main-grid">
+            <!-- Left Panel: Configuration -->
+            <section class="panel config-panel">
+                <h2 class="panel-title">⚙️ CONFIGURATION PANEL</h2>
+                
+                <form id="configForm">
+                    <!-- API Configuration -->
+                    <div class="config-section">
+                        <h3>🔑 API Configuration</h3>
+                        <div class="form-group">
+                            <label for="apiKey">Binance API Key</label>
+                            <input type="text" id="apiKey" name="apiKey" placeholder="Enter your API key" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="apiSecret">Binance API Secret</label>
+                            <div class="password-input-wrapper">
+                                <input type="password" id="apiSecret" name="apiSecret" placeholder="Enter your API secret" required>
+                                <button type="button" class="password-toggle" id="apiSecretToggle" aria-label="Toggle password visibility">
+                                    <span class="toggle-icon">👁️</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Market Settings -->
+                    <div class="config-section">
+                        <h3>📊 Market Settings</h3>
+                        <div class="form-group">
+                            <label for="topGainersCount">Top Gainers Count</label>
+                            <input type="number" id="topGainersCount" name="topGainersCount" min="1" max="100" value="35">
+                        </div>
+                        <div class="form-group">
+                            <label for="candleTimeframe">Candle Timeframe</label>
+                            <select id="candleTimeframe" name="candleTimeframe">
+                                <option value="1h" selected>1 Hour</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Volume Conditions -->
+                    <div class="config-section">
+                        <h3>📈 Volume Conditions</h3>
+                        <div class="form-group">
+                            <label for="volumeMultiplier">
+                                Volume Multiplier
+                                <span class="tooltip" data-tooltip="1.0 = 100% of previous volume, 1.2 = 120% of previous volume">ⓘ</span>
+                            </label>
+                            <input type="number" id="volumeMultiplier" name="volumeMultiplier" min="0.1" max="10" step="0.1" value="1.0">
+                        </div>
+                        <div class="form-group">
+                            <label for="volumeTimeLimit">
+                                Volume Time Limit (minutes)
+                                <span class="tooltip" data-tooltip="Volume condition must be met within this time">ⓘ</span>
+                            </label>
+                            <input type="number" id="volumeTimeLimit" name="volumeTimeLimit" min="1" max="60" value="15">
+                        </div>
+                    </div>
+
+                    <!-- Price Condition -->
+                    <div class="config-section">
+                        <h3>💰 Price Condition</h3>
+                        <div class="form-group">
+                            <label for="priceChangePercent">
+                                Price Change % from Prev 1H
+                                <span class="tooltip" data-tooltip="Minimum price increase required from previous candle close">ⓘ</span>
+                            </label>
+                            <input type="number" id="priceChangePercent" name="priceChangePercent" min="0" max="100" step="0.1" value="2.0">
+                        </div>
+                    </div>
+
+                    <!-- Risk Management -->
+                    <div class="config-section">
+                        <h3>🛡️ Risk Management</h3>
+                        <div class="form-group">
+                            <label for="stopLossPercent">Stop Loss %</label>
+                            <input type="number" id="stopLossPercent" name="stopLossPercent" min="0.1" max="50" step="0.1" value="1.5">
+                        </div>
+                        <div class="form-group">
+                            <label for="takeProfitPercent">
+                                Take Profit % (Trigger)
+                                <span class="tooltip" data-tooltip="Activates trailing stop when reached">ⓘ</span>
+                            </label>
+                            <input type="number" id="takeProfitPercent" name="takeProfitPercent" min="0.1" max="100" step="0.1" value="5.0">
+                        </div>
+                        <div class="form-group">
+                            <label for="trailingStopPercent">Trailing Stop Loss %</label>
+                            <input type="number" id="trailingStopPercent" name="trailingStopPercent" min="0.1" max="50" step="0.1" value="1.0">
+                        </div>
+                    </div>
+
+                    <!-- Trade Restrictions -->
+                    <div class="config-section">
+                        <h3>🚫 Trade Restrictions</h3>
+                        <div class="form-group">
+                            <label>Trade Mode</label>
+                            <input type="text" value="ONE TRADE AT A TIME (FIXED)" disabled class="disabled-input">
+                        </div>
+                        <div class="form-group">
+                            <label for="cooldownMinutes">Cooldown Per Coin (minutes)</label>
+                            <input type="number" id="cooldownMinutes" name="cooldownMinutes" min="1" max="1440" value="60">
+                        </div>
+                    </div>
+
+                    <!-- Controls -->
+                    <div class="control-buttons">
+                        <button type="button" id="startBtn" class="btn btn-success">▶ START BOT</button>
+                        <button type="button" id="stopBtn" class="btn btn-danger" disabled>⏹ STOP BOT</button>
+                        <button type="submit" class="btn btn-primary">💾 SAVE CONFIG</button>
+                    </div>
+                </form>
+            </section>
+
+            <!-- Right Panel: Market Monitor -->
+            <section class="panel market-panel">
+                <h2 class="panel-title">📡 LIVE MARKET MONITOR</h2>
+                
+                <div class="market-table-container">
+                    <table class="market-table">
+                        <thead>
+                            <tr>
+                                <th>SYMBOL</th>
+                                <th>PRICE</th>
+                                <th>PREV CLOSE</th>
+                                <th>CUR 1H VOL</th>
+                                <th>PREV 1H VOL</th>
+                                <th>ELAPSED</th>
+                                <th>STATUS</th>
+                            </tr>
+                        </thead>
+                        <tbody id="marketTableBody">
+                            <tr class="empty-state">
+                                <td colspan="7">Start the bot to see live market data...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="status-legend">
+                    <h4>STATUS LEGEND:</h4>
+                    <div class="legend-grid">
+                        <span>⏳ WAIT → Conditions not met</span>
+                        <span>🔥 SIGNAL → Entry conditions met</span>
+                        <span>🟢 IN TRADE → Active position</span>
+                        <span>🔒 LOCKED → Another trade is active</span>
+                        <span>🧊 COOLDOWN → Coin traded recently</span>
+                        <span>❌ TIME OUT → Volume time limit exceeded</span>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- Active Trade Section -->
+        <section class="panel trade-panel" id="tradePanel" style="display: none;">
+            <h2 class="panel-title">🟢 ACTIVE TRADE</h2>
+            
+            <div class="trade-grid">
+                <div class="trade-info">
+                    <label>SYMBOL</label>
+                    <span id="tradeSymbol">-</span>
+                </div>
+                <div class="trade-info">
+                    <label>ENTRY PRICE</label>
+                    <span id="tradeEntryPrice">-</span>
+                </div>
+                <div class="trade-info">
+                    <label>CURRENT PRICE</label>
+                    <span id="tradeCurrentPrice">-</span>
+                </div>
+                <div class="trade-info">
+                    <label>STOP LOSS</label>
+                    <span id="tradeStopLoss">-</span>
+                </div>
+                <div class="trade-info">
+                    <label>TP TRIGGER</label>
+                    <span id="tradeTpTrigger">-</span>
+                </div>
+                <div class="trade-info">
+                    <label>TRAILING STOP</label>
+                    <span id="tradeTrailingStop">-</span>
+                </div>
+                <div class="trade-info highlight">
+                    <label>UNREALIZED PNL</label>
+                    <span id="tradePnl" class="pnl-positive">-</span>
+                </div>
+                <div class="trade-info">
+                    <label>TRADE STATE</label>
+                    <span id="tradeState">-</span>
+                </div>
+            </div>
+        </section>
+
+        <br>
+
+        <!-- Bot Logs Section -->
+        <section class="panel logs-panel">
+            <h2 class="panel-title">📜 BOT LOGS / EVENTS</h2>
+            
+            <div class="logs-container" id="logsContainer">
+                <div class="log-entry">
+                    <span class="log-time">[--:--:--]</span>
+                    <span class="log-message">Waiting for bot to start...</span>
+                </div>
+            </div>
+        </section>
+
+        <br>
+
+        <!-- Active Trade Section (Table) -->
+        <section class="panel active-trade-panel">
+            <h2 class="panel-title">🟢 ACTIVE TRADE</h2>
+            
+            <div class="active-trade-table-container">
+                <table class="active-trade-table">
+                    <thead>
+                        <tr>
+                            <th>SYMBOL</th>
+                            <th>ENTRY PRICE</th>
+                            <th>CURRENT PRICE</th>
+                            <th>USDT</th>
+                            <th>STOP LOSS</th>
+                            <th>TP TRIGGER</th>
+                            <th>TRAILING STOP</th>
+                            <th>PNL %</th>
+                            <th>STATE</th>
+                        </tr>
+                    </thead>
+                    <tbody id="activeTradeTableBody">
+                        <tr class="empty-state">
+                            <td colspan="9">No active trade...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <br>
+
+        <!-- Trade History Section -->
+        <section class="panel history-panel">
+            <h2 class="panel-title">📊 TRADING HISTORY</h2>
+            
+            <div class="history-table-container">
+                <table class="history-table">
+                    <thead>
+                        <tr>
+                            <th>DATE/TIME</th>
+                            <th>SYMBOL</th>
+                            <th>ENTRY</th>
+                            <th>EXIT</th>
+                            <th>USDT</th>
+                            <th>PNL %</th>
+                            <th>REASON</th>
+                        </tr>
+                    </thead>
+                    <tbody id="historyTableBody">
+                        <tr class="empty-state">
+                            <td colspan="7">No trades yet...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
