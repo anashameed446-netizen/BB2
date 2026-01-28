@@ -2,7 +2,9 @@
 import asyncio
 import logging
 import sys
+import time
 from pathlib import Path
+from datetime import datetime
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -37,7 +39,12 @@ class TradingBot:
     def __init__(self):
         self.running = False
         self.config_manager = ConfigManager()
-        
+        self.price_cache = {}
+        self.volume_cache = {}
+        self._volume_snapshot = {}
+        self._hour_start = None
+
+
         # Initialize components
         self.binance_client = None
         self.candle_tracker = None
@@ -101,18 +108,77 @@ class TradingBot:
     #     # Start main loop
     #     asyncio.create_task(self.main_loop())
     async def fast_price_ui_loop(self):
-        logger.info("FAST PRICE LOOP STARTED")  # <--- ADD THIS
+        logger.info("FAST PRICE LOOP STARTED")
 
         while self.running:
             try:
                 prices = self.binance_client.get_fast_prices()
-                if prices:
-                    logger.info("FAST PRICE SENT")  # <--- ADD THIS
-                    await broadcast_price_only(prices)
-            except Exception as e:
-                logger.error(f"Fast price loop error: {e}")
+                volumes_24h = self.binance_client.get_fast_volumes()
 
-            await asyncio.sleep(1.5)
+                now = datetime.utcnow().replace(minute=0, second=0, microsecond=0)
+
+                # 🔄 New hour → reset snapshot
+                if self._hour_start != now:
+                    self._hour_start = now
+                    self._volume_snapshot = volumes_24h.copy()
+                    self.volume_cache.clear()
+                    logger.info("🔄 Volume snapshot reset for new hour")
+
+                # 📊 Rolling 1H volume
+                for symbol, vol in volumes_24h.items():
+                    base = self._volume_snapshot.get(symbol, vol)
+                    self.volume_cache[symbol] = max(0, vol - base)
+
+                if prices:
+                    self.price_cache.update(prices)
+
+                await broadcast_price_only(prices)
+
+            except Exception as e:
+                logger.error(f"Fast loop error: {e}")
+
+            await asyncio.sleep(1)
+
+
+
+    async def trade_monitor_loop(self):
+        logger.info("TRADE MONITOR LOOP STARTED")
+
+        while self.running:
+            try:
+                if not self.state_manager.is_trade_active():
+                    await asyncio.sleep(0.3)
+                    continue
+
+                trade = self.trade_manager.get_active_trade()
+                if not trade:
+                    await asyncio.sleep(0.3)
+                    continue
+
+                symbol = trade["symbol"]
+                current_price = self.price_cache.get(symbol)
+
+                if current_price is None:
+                    await asyncio.sleep(0.2)
+                    continue
+
+                t0 = time.time()
+
+                exit_result = self.trade_manager.update_trade_status(current_price)
+
+                if exit_result["should_exit"]:
+                    latency_ms = (time.time() - t0) * 1000
+                    logger.info(
+                        f"⏱ EXIT SIGNAL [{symbol}] | reason={exit_result['reason']} | latency={latency_ms:.2f} ms"
+                    )
+
+                    await self.execute_exit(exit_result["reason"])
+
+            except Exception as e:
+                logger.error(f"Trade monitor error: {e}")
+
+            await asyncio.sleep(0.3)
+
 
 
     
@@ -127,6 +193,7 @@ class TradingBot:
 
         asyncio.create_task(self.main_loop())
         asyncio.create_task(self.fast_price_ui_loop())  # <-- THIS MUST EXIST
+        asyncio.create_task(self.trade_monitor_loop()) # TP / SL / trailing
 
 
         
@@ -233,33 +300,24 @@ class TradingBot:
         await self.log_to_ui("⏹️ Bot stopped")
     
     async def main_loop(self):
-        """Main bot execution loop."""
         while self.running:
             try:
-                # Step 1: Scan top gainers
                 await self.scan_markets()
-                
-                # Step 2: Update candle data for monitored symbols
-                await self.update_candles()
-                
-                # Step 3: Check for entry signals (if no active trade)
+
+                # ✅ CANDLE UPDATE HERE (REST, slow loop)
+                for symbol in self.monitored_symbols:
+                    self.candle_tracker.update_candles(symbol)
+
                 if not self.state_manager.is_trade_active():
                     await self.check_entry_signals()
-                
-                # Step 4: Monitor active trade (if exists)
-                else:
-                    await self.monitor_active_trade()
-                
-                # Step 5: Broadcast updates to UI
+
                 await self.broadcast_updates()
-                
-                # Wait before next iteration
                 await asyncio.sleep(self.scan_interval)
-            
+
             except Exception as e:
                 logger.error(f"Error in main loop: {e}")
-                await self.log_to_ui(f"❌ Error: {str(e)}", "error")
                 await asyncio.sleep(5)
+
     
     async def scan_markets(self):
         """Scan and update top gainers."""
@@ -273,17 +331,8 @@ class TradingBot:
             self.monitored_symbols = symbols
             self.requested_count = top_gainers_count  # Store requested count for filtering
             logger.debug(f"Scanned {len(symbols)} symbols (requested: {top_gainers_count}, buffer: {scan_buffer})")
-    
-    async def update_candles(self):
-        """Update candle data for all monitored symbols."""
-        # Timeframe is hardcoded to 1h (requirement: 1H only)
-        interval = "1h"
-        
-        # Update all monitored symbols with small delay to avoid rate limits
-        for symbol in self.monitored_symbols:
-            self.candle_tracker.update_candles(symbol, interval)
-            # Small delay between requests to respect rate limits (50ms = 20 req/sec max)
-            # await asyncio.sleep(0.05)
+
+
     
     async def check_entry_signals(self):
         """Check for entry signals across monitored symbols."""
@@ -365,7 +414,7 @@ class TradingBot:
             return
         
         symbol = trade['symbol']
-        current_price = self.binance_client.get_current_price(symbol)
+        current_price = self.price_cache.get(symbol)
         
         if not current_price:
             return
@@ -429,10 +478,18 @@ class TradingBot:
             elapsed_minutes = current_candle.get('elapsed_minutes') if current_candle else None
             
             # Filter out symbols with invalid elapsed time (None, negative, or > 60 minutes)
-            if elapsed_minutes is None or elapsed_minutes < 0 or elapsed_minutes > 60:
-                # Skip this symbol - invalid elapsed time indicates bad candle data
+            # if elapsed_minutes is None or elapsed_minutes < 0 or elapsed_minutes > 60:
+            #     # Skip this symbol - invalid elapsed time indicates bad candle data
+            #     continue
+            volume_time_limit = self.config_manager['volume_time_limit']
+
+            # HARD STRATEGY GATE
+            if elapsed_minutes is None:
                 continue
-            
+
+            if elapsed_minutes > volume_time_limit:
+                continue
+
             if prev_candle and current_candle and current_price:
                 result = self.entry_conditions.check_all_conditions(
                     symbol=symbol,
@@ -449,7 +506,7 @@ class TradingBot:
                     'symbol': symbol,
                     'price': current_price,
                     'prev_close_price': prev_candle.close_price,
-                    'current_volume': current_candle['volume'],
+                    'current_volume': self.volume_cache.get(symbol, current_candle['volume']),
                     'prev_volume': prev_candle.volume,
                     'elapsed_minutes': elapsed_minutes,
                     'status': result['status']

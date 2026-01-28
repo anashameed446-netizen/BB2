@@ -263,67 +263,65 @@ class TradeManager:
     
     def update_trade_status(self, current_price: float) -> Dict:
         """
-        Update active trade with current price and check exit conditions.
-        
-        Returns:
-            Dict with 'should_exit' (bool) and 'reason' (str) if exit needed
+        PURE LOGIC.
+        Called by ultra-fast loop.
+        No REST, no UI, no sleeps.
         """
-        if not self.active_trade:
-            return {'should_exit': False, 'reason': None}
-        
-        # Update current price
-        self.active_trade['current_price'] = current_price
-        
-        # Update highest price
-        self.active_trade['highest_price'] = self.risk_manager.update_highest_price(
-            self.active_trade['highest_price'],
+
+        trade = self.active_trade
+        if not trade:
+            return {"should_exit": False, "reason": None}
+
+        # --------------------------------------------------
+        # 1️⃣ Update current price
+        trade["current_price"] = current_price
+
+        # --------------------------------------------------
+        # 2️⃣ Update highest price (monotonic, never down)
+        if current_price > trade["highest_price"]:
+            trade["highest_price"] = current_price
+
+        # --------------------------------------------------
+        # 3️⃣ Update PnL
+        trade["pnl_percent"] = self.risk_manager.calculate_pnl_percent(
+            trade["entry_price"],
             current_price
         )
-        
-        # Calculate current PnL
-        self.active_trade['pnl_percent'] = self.risk_manager.calculate_pnl_percent(
-            self.active_trade['entry_price'],
-            current_price
-        )
-        
-        # Check if TP trigger reached (activate trailing) BEFORE checking exit
-        if not self.active_trade['trailing_active']:
-            if current_price >= self.active_trade['tp_trigger']:
-                self.active_trade['trailing_active'] = True
-                self.active_trade['state'] = 'TRAILING ACTIVE'
-                logger.info(f"Take profit trigger reached at {current_price}, activating trailing stop for {self.active_trade['symbol']}")
-        
-        # Update trailing stop if active (must be done before exit check)
-        if self.active_trade['trailing_active']:
-            self.active_trade['trailing_stop'] = self.risk_manager.calculate_trailing_stop(
-                self.active_trade['highest_price']
+
+        # --------------------------------------------------
+        # 4️⃣ Activate trailing ONCE when TP trigger hit
+        if not trade["trailing_active"] and current_price >= trade["tp_trigger"]:
+            trade["trailing_active"] = True
+            trade["state"] = "TRAILING"
+            logger.info(
+                f"🔁 Trailing activated for {trade['symbol']} "
+                f"@ price={current_price:.6f}"
             )
-        
-        # Check exit conditions with UPDATED values (including trailing_stop)
-        exit_check = self.risk_manager.check_exit_conditions(
-            entry_price=self.active_trade['entry_price'],
+
+        # --------------------------------------------------
+        # 5️⃣ Update trailing stop ONLY if active
+        if trade["trailing_active"]:
+            trade["trailing_stop"] = self.risk_manager.calculate_trailing_stop(
+                trade["highest_price"]
+            )
+
+        # --------------------------------------------------
+        # 6️⃣ Exit decision (final gate)
+        exit_result = self.risk_manager.check_exit_conditions(
+            entry_price=trade["entry_price"],
             current_price=current_price,
-            stop_loss=self.active_trade['stop_loss'],
-            tp_trigger=self.active_trade['tp_trigger'],
-            trailing_active=self.active_trade['trailing_active'],
-            highest_price=self.active_trade['highest_price']
+            stop_loss=trade["stop_loss"],
+            trailing_active=trade["trailing_active"],
+            trailing_stop=trade["trailing_stop"]
         )
-        
-        # Update trailing status if needed (from exit_check result)
-        if exit_check['new_trailing_active'] and not self.active_trade['trailing_active']:
-            self.active_trade['trailing_active'] = True
-            self.active_trade['state'] = 'TRAILING ACTIVE'
-            logger.info(f"Trailing stop activated for {self.active_trade['symbol']}")
-        
-        # Periodically save trade state (every update)
+
+        # --------------------------------------------------
+        # 7️⃣ Persist (always after logic)
         self.save_trade_state()
-        
-        # Return exit check result
-        return {
-            'should_exit': exit_check['should_exit'],
-            'reason': exit_check['reason'] if exit_check['should_exit'] else None
-        }
-    
+
+        return exit_result
+
+
     def get_active_trade(self) -> Optional[Dict]:
         """Get current active trade details."""
         return self.active_trade

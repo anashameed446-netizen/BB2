@@ -215,6 +215,29 @@ class BinanceClient:
         self._fast_price_cache = (prices, now)
         return prices
 
+    def get_fast_volumes(self) -> dict:
+        """
+        Returns live base-asset volume deltas for symbols.
+        Uses 24h ticker as a fast approximation.
+        """
+        try:
+            tickers = self.client.get_ticker()
+            volumes = {}
+
+            for t in tickers:
+                symbol = t.get("symbol")
+                if not symbol or not symbol.endswith("USDT"):
+                    continue
+
+                # base asset volume (NOT quote volume)
+                volumes[symbol] = float(t.get("volume", 0))
+
+            return volumes
+
+        except Exception as e:
+            logger.error(f"Fast volume fetch failed: {e}")
+            return {}
+
 
     def get_all_prices(self) -> Dict[str, float]:
         """Fetch all symbol prices in ONE call."""
