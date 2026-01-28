@@ -139,7 +139,7 @@ async def get_bot_state():
             else:
                 # Trade still valid, update usdt_amount for display
                 symbol = active_trade['symbol']
-                current_price = bot_instance.price_cache(symbol) if bot_instance.binance_client else None
+                current_price = bot_instance.binance_client.get_current_price(symbol) if bot_instance.binance_client else None
                 quantity = active_trade.get('quantity', 0)
                 
                 if current_price and quantity:
@@ -158,7 +158,7 @@ async def get_bot_state():
                 
                 prev_candle = bot_instance.candle_tracker.get_previous_candle(symbol) if bot_instance.candle_tracker else None
                 current_candle = bot_instance.candle_tracker.get_current_candle(symbol) if bot_instance.candle_tracker else None
-                current_price = bot_instance.price_cache(symbol) if bot_instance.binance_client else None
+                current_price = bot_instance.binance_client.get_current_price(symbol) if bot_instance.binance_client else None
                 
                 # Validate elapsed time
                 elapsed_minutes = current_candle.get('elapsed_minutes') if current_candle else None
@@ -226,52 +226,23 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 async def broadcast_message(message: dict):
+    """Broadcast message to all connected WebSocket clients."""
     if not websocket_clients:
         return
-
+    
     message_json = json.dumps(message)
     disconnected = set()
-
-    for client in list(websocket_clients):  # ✅ COPY
-        try:
-            await client.send_text(message_json)
-        except Exception:
-            disconnected.add(client)
-
-    for client in disconnected:
-        websocket_clients.discard(client)
-
-async def broadcast_price_only(prices: dict):
-    """
-    Broadcast fast price-only updates to UI.
-    Does NOT affect strategy logic.
-    """
-    if not websocket_clients:
-        return
-
-    payload = {
-        "type": "price_update",
-        "data": [
-            {
-                "symbol": symbol,
-                "price": round(price, 6)
-            }
-            for symbol, price in prices.items()
-        ]
-    }
-
-    message_json = json.dumps(payload)
-    disconnected = set()
-
+    
     for client in websocket_clients:
         try:
             await client.send_text(message_json)
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error sending to client: {e}")
             disconnected.add(client)
-
+    
+    # Remove disconnected clients
     for client in disconnected:
         websocket_clients.discard(client)
-
 
 
 def set_bot_instance(bot):

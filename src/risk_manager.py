@@ -34,44 +34,51 @@ class RiskManager:
         entry_price: float,
         current_price: float,
         stop_loss: float,
+        tp_trigger: float,
         trailing_active: bool,
-        trailing_stop: Optional[float]
+        highest_price: float
     ) -> Dict:
         """
-        Exit priority:
-        1️⃣ Stop Loss (always active)
-        2️⃣ Trailing Stop (only if activated)
+        Check if exit conditions are met.
+        
+        Returns:
+            Dict with 'should_exit' (bool), 'reason' (str), and 'new_trailing_active' (bool)
         """
-
-        # -------------------------------
-        # 1️⃣ HARD STOP LOSS
-        if current_price <= stop_loss:
+        # Check stop loss hit
+        if not trailing_active and current_price <= stop_loss:
             return {
-                "should_exit": True,
-                "reason": "STOP LOSS HIT"
+                'should_exit': True,
+                'reason': 'Stop loss hit',
+                'new_trailing_active': trailing_active
             }
-
-        # -------------------------------
-        # 2️⃣ TRAILING STOP
+        
+        # Check if TP trigger reached (activate trailing)
+        if not trailing_active and current_price >= tp_trigger:
+            logger.info(f"Take profit trigger reached at {current_price}, activating trailing stop")
+            return {
+                'should_exit': False,
+                'reason': 'TP reached - trailing activated',
+                'new_trailing_active': True
+            }
+        
+        # If trailing is active, check trailing stop
         if trailing_active:
-            if trailing_stop is None:
-                logger.error("Trailing active but trailing_stop is None")
-                return {"should_exit": False, "reason": None}
-
+            trailing_stop = self.calculate_trailing_stop(highest_price)
+            
+            # Check if current price is at or below trailing stop
             if current_price <= trailing_stop:
+                logger.info(f"Trailing stop hit: current_price={current_price:.8f} <= trailing_stop={trailing_stop:.8f}")
                 return {
-                    "should_exit": True,
-                    "reason": "TRAILING STOP HIT"
+                    'should_exit': True,
+                    'reason': f'Trailing stop hit at {trailing_stop:.8f}',
+                    'new_trailing_active': trailing_active
                 }
-
-        # -------------------------------
-        # 3️⃣ HOLD
+        
         return {
-            "should_exit": False,
-            "reason": None
+            'should_exit': False,
+            'reason': 'Conditions not met',
+            'new_trailing_active': trailing_active
         }
-
-
     
     def calculate_pnl_percent(self, entry_price: float, current_price: float) -> float:
         """Calculate PnL percentage."""
