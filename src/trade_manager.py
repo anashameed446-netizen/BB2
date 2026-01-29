@@ -81,7 +81,9 @@ class TradeManager:
                 'current_price': filled_price,
                 'trailing_active': False,
                 'state': 'ACTIVE',
-                'pnl_percent': 0.0
+                'pnl_percent': 0.0,
+                'entry_timestamp': time.time(),
+
             }
             
             self.active_trade = trade
@@ -262,67 +264,84 @@ class TradeManager:
             return None
     
     def update_trade_status(self, current_price: float) -> Dict:
-        """
-        Update active trade with current price and check exit conditions.
-        
-        Returns:
-            Dict with 'should_exit' (bool) and 'reason' (str) if exit needed
-        """
         if not self.active_trade:
             return {'should_exit': False, 'reason': None}
-        
-        # Update current price
-        self.active_trade['current_price'] = current_price
-        
+
+        trade = self.active_trade
+
+        trade['current_price'] = current_price
+
         # Update highest price
-        self.active_trade['highest_price'] = self.risk_manager.update_highest_price(
-            self.active_trade['highest_price'],
+        if current_price > trade['highest_price']:
+            trade['highest_price'] = current_price
+
+        # Update PnL
+        trade['pnl_percent'] = self.risk_manager.calculate_pnl_percent(
+            trade['entry_price'],
             current_price
         )
-        
-        # Calculate current PnL
-        self.active_trade['pnl_percent'] = self.risk_manager.calculate_pnl_percent(
-            self.active_trade['entry_price'],
-            current_price
-        )
-        
-        # Check if TP trigger reached (activate trailing) BEFORE checking exit
-        if not self.active_trade['trailing_active']:
-            if current_price >= self.active_trade['tp_trigger']:
-                self.active_trade['trailing_active'] = True
-                self.active_trade['state'] = 'TRAILING ACTIVE'
-                logger.info(f"Take profit trigger reached at {current_price}, activating trailing stop for {self.active_trade['symbol']}")
-        
-        # Update trailing stop if active (must be done before exit check)
-        if self.active_trade['trailing_active']:
-            self.active_trade['trailing_stop'] = self.risk_manager.calculate_trailing_stop(
-                self.active_trade['highest_price']
+        # ⏱️ TIME-BASED EXIT (HARD EXIT)
+        cfg = self.risk_manager.config_manager
+
+        if cfg.get('time_exit_enabled', False):
+            max_minutes = cfg.get('max_trade_duration_minutes', 0)
+
+            if max_minutes > 0:
+                elapsed_seconds = time.time() - trade.get('entry_timestamp', time.time())
+                elapsed_minutes = elapsed_seconds / 60
+
+                if elapsed_minutes >= max_minutes:
+                    logger.warning(
+                        f"Exit signal: Time-based exit hit | "
+                        f"Elapsed={elapsed_minutes:.2f} min | Limit={max_minutes} min"
+                    )
+                    exit_details = self.execute_exit(
+                        reason=f"Time exit after {max_minutes} minutes"
+                    )
+                    return {'should_exit': True, 'reason': exit_details}
+
+        # Activate trailing stop
+        if not trade['trailing_active'] and current_price >= trade['tp_trigger']:
+            trade['trailing_active'] = True
+            trade['state'] = 'TRAILING ACTIVE'
+            trade['trailing_stop'] = self.risk_manager.calculate_trailing_stop(
+                trade['highest_price']
             )
-        
-        # Check exit conditions with UPDATED values (including trailing_stop)
-        exit_check = self.risk_manager.check_exit_conditions(
-            entry_price=self.active_trade['entry_price'],
-            current_price=current_price,
-            stop_loss=self.active_trade['stop_loss'],
-            tp_trigger=self.active_trade['tp_trigger'],
-            trailing_active=self.active_trade['trailing_active'],
-            highest_price=self.active_trade['highest_price']
-        )
-        
-        # Update trailing status if needed (from exit_check result)
-        if exit_check['new_trailing_active'] and not self.active_trade['trailing_active']:
-            self.active_trade['trailing_active'] = True
-            self.active_trade['state'] = 'TRAILING ACTIVE'
-            logger.info(f"Trailing stop activated for {self.active_trade['symbol']}")
-        
-        # Periodically save trade state (every update)
+            logger.info(
+                f"Trailing activated for {trade['symbol']} | "
+                f"TP={trade['tp_trigger']} | TS={trade['trailing_stop']}"
+            )
+
+        # Update trailing stop ONLY if price makes new high
+        if trade['trailing_active'] and current_price >= trade['highest_price']:
+            trade['trailing_stop'] = self.risk_manager.calculate_trailing_stop(
+                trade['highest_price']
+            )
+
+        # 🚨 HARD EXIT CONDITIONS
+        if trade['trailing_active'] and current_price <= trade['trailing_stop']:
+            logger.warning(
+                f"Exit signal: Trailing stop hit at {trade['trailing_stop']} | "
+                f"Current price={current_price}"
+            )
+            exit_details = self.execute_exit(
+                reason=f"Trailing stop hit at {trade['trailing_stop']}"
+            )
+            return {'should_exit': True, 'reason': exit_details}
+
+        if current_price <= trade['stop_loss']:
+            logger.warning(
+                f"Exit signal: Stop loss hit at {trade['stop_loss']} | "
+                f"Current price={current_price}"
+            )
+            exit_details = self.execute_exit(
+                reason=f"Stop loss hit at {trade['stop_loss']}"
+            )
+            return {'should_exit': True, 'reason': exit_details}
+
         self.save_trade_state()
-        
-        # Return exit check result
-        return {
-            'should_exit': exit_check['should_exit'],
-            'reason': exit_check['reason'] if exit_check['should_exit'] else None
-        }
+        return {'should_exit': False, 'reason': None}
+
     
     def get_active_trade(self) -> Optional[Dict]:
         """Get current active trade details."""

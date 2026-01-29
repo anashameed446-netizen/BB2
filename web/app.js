@@ -15,6 +15,9 @@ const logsContainer = document.getElementById('logsContainer');
 const historyTableBody = document.getElementById('historyTableBody');
 const activeTradeTableBody = document.getElementById('activeTradeTableBody');
 const tradePanel = document.getElementById('tradePanel');
+const timeExitEnabled = document.getElementById('timeExitEnabled');
+const maxTradeDurationMinutes = document.getElementById('maxTradeDurationMinutes');
+
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -231,6 +234,8 @@ function populateForm(config) {
     document.getElementById('takeProfitPercent').value = config.take_profit_percent || 5.0;
     document.getElementById('trailingStopPercent').value = config.trailing_stop_percent || 1.0;
     document.getElementById('cooldownMinutes').value = config.cooldown_minutes || 60;
+    timeExitEnabled.checked = !!config.time_exit_enabled;
+    maxTradeDurationMinutes.value = config.max_trade_duration_minutes || 60;
 }
 
 // Save Configuration
@@ -248,7 +253,9 @@ async function saveConfig(e) {
         stop_loss_percent: parseFloat(document.getElementById('stopLossPercent').value),
         take_profit_percent: parseFloat(document.getElementById('takeProfitPercent').value),
         trailing_stop_percent: parseFloat(document.getElementById('trailingStopPercent').value),
-        cooldown_minutes: parseInt(document.getElementById('cooldownMinutes').value)
+        cooldown_minutes: parseInt(document.getElementById('cooldownMinutes').value),
+        time_exit_enabled: timeExitEnabled.checked,
+        max_trade_duration_minutes: parseInt(maxTradeDurationMinutes.value)
     };
     
     try {

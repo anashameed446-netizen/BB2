@@ -37,6 +37,10 @@ class ConfigManager:
     def _validate(self) -> None:
         """Validate configuration parameters."""
         # Timeframe is hardcoded to 1h - remove from required keys
+        # ---- Time-based exit defaults ----
+        self.config.setdefault("time_exit_enabled", False)
+        self.config.setdefault("max_trade_duration_minutes", 0)
+
         required_keys = [
             'api_key', 'api_secret', 'top_gainers_count',
             'volume_multiplier', 'volume_time_limit', 'price_change_percent',
@@ -60,6 +64,15 @@ class ConfigManager:
         
         if self.config['price_change_percent'] < 0:
             raise ValueError("price_change_percent must be >= 0")
+        
+        # ---- Time-based exit validation ----
+        if self.config["time_exit_enabled"]:
+            if not isinstance(self.config["max_trade_duration_minutes"], int):
+                raise ValueError("max_trade_duration_minutes must be an integer")
+
+            if self.config["max_trade_duration_minutes"] <= 0:
+                raise ValueError("max_trade_duration_minutes must be > 0 when time_exit_enabled")
+
     
     def __getitem__(self, key: str):
         """Get configuration value by key."""
