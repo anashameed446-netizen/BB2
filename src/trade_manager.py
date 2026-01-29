@@ -291,7 +291,22 @@ class TradeManager:
         if cfg.get('time_exit_enabled', False):
             max_minutes = cfg.get('max_trade_duration_minutes', 0)
             if max_minutes > 0:
-                elapsed_minutes = (time.time() - trade['entry_timestamp']) / 60
+                entry_ts = trade.get('entry_timestamp')
+
+                # Backward compatibility for old trades
+                if entry_ts is None:
+                    # Fallback: use entry_time ISO string if available
+                    entry_time_str = trade.get('entry_time')
+                    if entry_time_str:
+                        entry_ts = datetime.fromisoformat(entry_time_str).timestamp()
+                        trade['entry_timestamp'] = entry_ts  # persist fix
+                    else:
+                        # Absolute last fallback: assume "now" to avoid crash
+                        entry_ts = time.time()
+                        trade['entry_timestamp'] = entry_ts
+
+                elapsed_minutes = (time.time() - entry_ts) / 60
+
                 if elapsed_minutes >= max_minutes:
                     logger.warning(
                         f"Exit: Time-based exit | "
