@@ -281,7 +281,7 @@ class TradeManager:
             current_price
         )
         # ⏱️ TIME-BASED EXIT (HARD EXIT)
-        cfg = self.risk_manager.config_manager
+        cfg = self.risk_manager.config
 
         if cfg.get('time_exit_enabled', False):
             max_minutes = cfg.get('max_trade_duration_minutes', 0)
