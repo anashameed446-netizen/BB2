@@ -233,7 +233,7 @@ async def broadcast_message(message: dict):
     message_json = json.dumps(message)
     disconnected = set()
     
-    for client in websocket_clients:
+    for client in list(websocket_clients):
         try:
             await client.send_text(message_json)
         except Exception as e:
