@@ -355,6 +355,45 @@ class TradeManager:
         self.save_trade_state()
         return {'should_exit': False, 'reason': None}
 
+    def force_exit_on_stop(self):
+        """
+        Force-close trade on bot stop.
+        This bypasses trailing logic and exits at market no matter what.
+        """
+        trade = self.active_trade
+        if not trade:
+            return None
+
+        symbol = trade['symbol']
+        base_asset = symbol.replace('USDT', '')
+
+        try:
+            balance = self.client.get_account_balance(base_asset)
+            if not balance or balance <= 0:
+                raise Exception("No balance available to sell")
+
+            # 🚨 FORCE MARKET SELL (no checks, no conditions)
+            order = self.client.place_market_sell(symbol, balance)
+
+            if not order:
+                raise Exception("Market sell failed")
+
+            exit_price = float(order['fills'][0]['price'])
+
+            exit_details = {
+                "symbol": symbol,
+                "entry_price": trade['entry_price'],
+                "exit_price": exit_price,
+                "pnl_percent": ((exit_price - trade['entry_price']) / trade['entry_price']) * 100,
+                "reason": "Bot stopped (force exit)"
+            }
+
+            return exit_details
+
+        except Exception as e:
+            self.logger.error(f"FORCE EXIT FAILED for {symbol}: {e}")
+            return None
+
 
     
     def get_active_trade(self) -> Optional[Dict]:

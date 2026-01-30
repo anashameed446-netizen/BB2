@@ -105,95 +105,40 @@ class TradingBot:
         self.running = False
         
         # Close any active trade before stopping
+        # Close any active trade before stopping (FORCE)
         active_trade = self.trade_manager.get_active_trade()
+
         if active_trade:
-            logger.info(f"Closing active trade {active_trade['symbol']} before stopping bot")
-            await self.log_to_ui(f"🛑 Closing active trade {active_trade['symbol']} before stopping...")
-            
-            # Ensure client is still connected before attempting to close
-            if not self.binance_client or not self.binance_client.connected:
-                logger.warning(f"Binance client not connected, cannot close trade {active_trade['symbol']}")
+            symbol = active_trade['symbol']
+            logger.info(f"FORCE closing active trade {symbol} due to bot stop")
+            await self.log_to_ui(f"🛑 Force closing active trade {symbol} (bot stopped)...")
+
+            # 🚨 Force exit (market sell, no conditions)
+            exit_details = self.trade_manager.force_exit_on_stop()
+
+            if exit_details:
+                # Add to history
+                self.trade_history.add_trade(exit_details)
+
+                pnl_emoji = "📈" if exit_details['pnl_percent'] > 0 else "📉"
                 await self.log_to_ui(
-                    f"⚠️ Cannot close trade {active_trade['symbol']}: Binance client not connected",
-                    "error"
+                    f"{pnl_emoji} Trade force-closed - PnL: {exit_details['pnl_percent']:+.2f}%"
                 )
             else:
-                # Check if trade has sufficient balance (>= 1 USDT) before attempting to close
-                symbol = active_trade['symbol']
-                base_asset = symbol.replace('USDT', '')
-                balance = self.binance_client.get_account_balance(base_asset)
-                current_price = self.binance_client.get_current_price(symbol)
-                
-                # If balance fetch failed, try to close anyway
-                if balance is None:
-                    logger.warning(f"Failed to fetch {base_asset} balance, attempting to close trade anyway")
-                    exit_details = self.trade_manager.execute_exit("Bot stopped")
-                    if exit_details:
-                        entry_time = active_trade.get('entry_time')
-                        if entry_time:
-                            exit_details['entry_time'] = entry_time
-                        self.trade_history.add_trade(exit_details)
-                        self.state_manager.release_trade_lock()
-                        pnl_emoji = "📈" if exit_details['pnl_percent'] > 0 else "📉"
-                        await self.log_to_ui(f"{pnl_emoji} Trade closed - PnL: {exit_details['pnl_percent']:+.2f}%")
-                elif current_price:
-                    usdt_value = balance * current_price
-                    
-                    # If less than 1 USDT, just clear the trade (dust, no need to sell)
-                    if usdt_value < 1:
-                        logger.info(
-                            f"Trade {symbol} has only {usdt_value:.4f} USDT remaining (< 1), "
-                            f"clearing trade state without selling (dust)"
-                        )
-                        await self.log_to_ui(
-                            f"ℹ️ Trade {symbol} has only {usdt_value:.4f} USDT remaining, clearing state (dust)",
-                            "info"
-                        )
-                        # Clear the trade state
-                        self.trade_manager.active_trade = None
-                        self.trade_manager.save_trade_state()
-                        self.state_manager.release_trade_lock()
-                    else:
-                        # Execute exit with "Bot stopped" reason
-                        exit_details = self.trade_manager.execute_exit("Bot stopped")
-                        
-                        if exit_details:
-                            # Add to trade history
-                            entry_time = active_trade.get('entry_time')
-                            if entry_time:
-                                exit_details['entry_time'] = entry_time
-                            else:
-                                # If entry_time not found, use current time as fallback
-                                from datetime import datetime
-                                exit_details['entry_time'] = datetime.now().isoformat()
-                                logger.warning(f"Entry time not found for {active_trade['symbol']}, using current time")
-                            
-                            self.trade_history.add_trade(exit_details)
-                            logger.info(f"Trade history updated: {len(self.trade_history.get_all_trades())} total trades")
-                            
-                            # Release trade lock
-                            self.state_manager.release_trade_lock()
-                            
-                            pnl_emoji = "📈" if exit_details['pnl_percent'] > 0 else "📉"
-                            await self.log_to_ui(
-                                f"{pnl_emoji} Trade closed - PnL: {exit_details['pnl_percent']:+.2f}%"
-                            )
-                        else:
-                            # Log more detailed error
-                            logger.error(f"Failed to close trade {active_trade['symbol']} on bot stop. Check logs for details.")
-                            await self.log_to_ui(
-                                f"⚠️ Failed to close trade {active_trade['symbol']} on bot stop. Check logs for details.",
-                                "error"
-                            )
-                else:
-                    logger.warning(f"Could not get current price for {symbol}, attempting to close trade anyway")
-                    exit_details = self.trade_manager.execute_exit("Bot stopped")
-                    if exit_details:
-                        entry_time = active_trade.get('entry_time')
-                        if entry_time:
-                            exit_details['entry_time'] = entry_time
-                        self.trade_history.add_trade(exit_details)
-                        self.state_manager.release_trade_lock()
+                # Sell failed, but we MUST clear state
+                logger.error(
+                    f"Force sell failed for {symbol}. Clearing state to prevent lock."
+                )
+                await self.log_to_ui(
+                    f"⚠️ Force sell failed for {symbol}. State cleared.",
+                    "error"
+                )
+
+            # 🔥 HARD GUARANTEE — ALWAYS CLEAR STATE
+            self.trade_manager.active_trade = None
+            self.trade_manager.save_trade_state()
+            self.state_manager.release_trade_lock()
+
         
         # Disconnect client after closing trade (if any)
         if self.binance_client:
