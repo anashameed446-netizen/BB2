@@ -323,8 +323,14 @@ class TradingBot:
     async def monitor_active_trade(self):
         """Monitor and update active trade."""
         trade = self.trade_manager.get_active_trade()
+
         if not trade:
+            # Safety: trade vanished but lock may still exist
+            if self.state_manager.is_trade_active():
+                logger.warning("Active trade missing but lock exists. Releasing lock.")
+                self.state_manager.release_trade_lock()
             return
+
         
         # Sync with Binance to check if trade was manually closed
         if not self.trade_manager.sync_with_binance():
@@ -342,10 +348,22 @@ class TradingBot:
         
         # Update trade status and get exit check result (uses updated values)
         exit_result = self.trade_manager.update_trade_status(current_price)
-        
-        # Check if exit is needed
+
         if exit_result and exit_result['should_exit']:
-            await self.execute_exit(exit_result['reason'])
+            exit_details = exit_result['reason']
+
+            if exit_details:
+                # 1️⃣ Add to history
+                self.trade_history.add_trade(exit_details)
+
+                # 2️⃣ Release lock
+                self.state_manager.release_trade_lock()
+
+                pnl_emoji = "📈" if exit_details['pnl_percent'] > 0 else "📉"
+                await self.log_to_ui(
+                    f"{pnl_emoji} Trade closed - PnL: {exit_details['pnl_percent']:+.2f}%"
+                )
+
     
     async def execute_exit(self, reason: str):
         """Execute exit trade."""
